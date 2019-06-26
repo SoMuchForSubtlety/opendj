@@ -2,21 +2,17 @@ package opendj
 
 import (
 	"errors"
-	"net/http"
 	"os/exec"
 	"strings"
 	"sync"
 	"time"
 
-	"google.golang.org/api/googleapi/transport"
 	"google.golang.org/api/youtube/v3"
 )
 
 // Dj ...
 type Dj struct {
-	ytServ *youtube.Service
-
-	waitingQueue Queue
+	waitingQueue queue
 	currentEntry QueueEntry
 
 	runningCommand *exec.Cmd
@@ -27,7 +23,7 @@ type Dj struct {
 	songStarted time.Time
 }
 
-// Video ...
+// Video can be anything youtube-dl supports
 type Video struct {
 	Title    string
 	URL      string
@@ -48,26 +44,19 @@ type queue struct {
 
 const youtubeURLStart = "https://www.youtube.com/watch?v="
 
-// NewDj returns a new Dj struct and channels for errors playack events
-func NewDj(youtubeKey string, queue []QueueEntry) (dj *Dj, playbackFeed <-chan QueueEntry, playbackErrorFeed <-chan error, err error) {
+// NewDj returns a new Dj struct and channels for errors playback events
+func NewDj(queue []QueueEntry) (dj *Dj, playbackFeed <-chan QueueEntry, playbackErrorFeed <-chan error, err error) {
 	dj = &Dj{}
 	dj.waitingQueue.Items = queue
 	dj.playbackFeed = make(chan QueueEntry, 100)
 	dj.playbackErrors = make(chan error, 100)
 
-	client := &http.Client{Transport: &transport.APIKey{Key: youtubeKey}}
-	ytServ, err := youtube.New(client)
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	dj.ytServ = ytServ
-
 	return dj, dj.playbackFeed, dj.playbackErrors, nil
 }
 
 // YouTubeVideo returns a video struct for a given youtube ID and any encoutered errors
-func (dj *Dj) YouTubeVideo(videoID string) (video Video, err error) {
-	res, err := dj.ytServ.Videos.List("id,snippet,contentDetails").Id(videoID).Do()
+func (dj *Dj) YouTubeVideo(videoID string, ytServ *youtube.Service) (video Video, err error) {
+	res, err := ytServ.Videos.List("id,snippet,contentDetails").Id(videoID).Do()
 	if err != nil {
 		return video, err
 	} else if len(res.Items) < 1 {
@@ -93,6 +82,7 @@ func (dj *Dj) AddEntry(newEntry QueueEntry) {
 
 // InsertEntry inserts the passed QueueEntry into the queue at the given index
 // if the index is too high it has the same effect as AddEntry()
+// returns an error if the index is < 0
 func (dj *Dj) InsertEntry(newEntry QueueEntry, index int) error {
 	dj.waitingQueue.Lock()
 	defer dj.waitingQueue.Unlock()
@@ -109,14 +99,30 @@ func (dj *Dj) InsertEntry(newEntry QueueEntry, index int) error {
 	return nil
 }
 
-// RemoveIndex  removes the element the given index from the queue
+// RemoveIndex removes the element the given index from the queue
+// returns an error if the index is out of range
 func (dj *Dj) RemoveIndex(index int) error {
 	dj.waitingQueue.Lock()
+	defer dj.waitingQueue.Unlock()
 	if index >= len(dj.waitingQueue.Items) || index < 0 {
 		return errors.New("index out of range")
 	}
 	dj.waitingQueue.Items = append(dj.waitingQueue.Items[:index], dj.waitingQueue.Items[index+1:]...)
-	dj.waitingQueue.Unlock()
+	return nil
+}
+
+// ChangeIndex swaps the element the given index for the provided one
+// returns an error if the index is out of range
+func (dj *Dj) ChangeIndex(newEntry QueueEntry, index int) error {
+	dj.waitingQueue.Lock()
+	defer dj.waitingQueue.Unlock()
+
+	if index < 0 || index >= len(dj.waitingQueue.Items) {
+		return errors.New("index out of range")
+	}
+
+	dj.waitingQueue.Items[index] = newEntry
+
 	return nil
 }
 
@@ -217,9 +223,9 @@ func (dj *Dj) DurationUntilUser(nick string) (durations []time.Duration) {
 	return durations
 }
 
-// AddDedication changes the dedication of the queue entry at the given index
+// ChangeDedication changes the dedication of the queue entry at the given index
 // returns an error if the index is out of range
-func (dj *Dj) AddDedication(index int, dedication string) error {
+func (dj *Dj) ChangeDedication(index int, dedication string) error {
 	dj.waitingQueue.Lock()
 	defer dj.waitingQueue.Unlock()
 
