@@ -1,4 +1,5 @@
 [![GoDoc](https://godoc.org/github.com/SoMuchForSubtlety/opendj?status.svg)](https://godoc.org/github.com/SoMuchForSubtlety/opendj)
 
-# open-dj
+# opendj
 
+A simple plugDJ clone that streams songs to a RTMP server usting ffmpeg and youtube-dl .
