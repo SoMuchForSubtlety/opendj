@@ -41,15 +41,14 @@ type QueueEntry struct {
 	Dedication string
 }
 
-// Queue ...
-type Queue struct {
+type queue struct {
 	Items []QueueEntry
 	sync.Mutex
 }
 
 const youtubeURLStart = "https://www.youtube.com/watch?v="
 
-// NewDj returns ...
+// NewDj returns a new Dj struct and channels for errors plaback events
 func NewDj(youtubeKey string, queue []QueueEntry) (dj *Dj, playbackFeed <-chan QueueEntry, playbackErrorFeed <-chan error, err error) {
 	dj = &Dj{}
 	dj.waitingQueue.Items = queue
@@ -66,8 +65,8 @@ func NewDj(youtubeKey string, queue []QueueEntry) (dj *Dj, playbackFeed <-chan Q
 	return dj, dj.playbackFeed, dj.playbackErrors, nil
 }
 
-// GetYTVideo ...
-func (dj *Dj) GetYTVideo(videoID string) (video Video, err error) {
+// YouTubeVideo returns a video struct for a given youtube ID and any encoutered errors
+func (dj *Dj) YouTubeVideo(videoID string) (video Video, err error) {
 	res, err := dj.ytServ.Videos.List("id,snippet,contentDetails").Id(videoID).Do()
 	if err != nil {
 		return video, err
@@ -80,14 +79,20 @@ func (dj *Dj) GetYTVideo(videoID string) (video Video, err error) {
 	return video, nil
 }
 
-// AddEntry ...
+// Queue return the current queue as a list of queue entries
+func (dj *Dj) Queue() []QueueEntry {
+	return dj.waitingQueue.Items
+}
+
+// AddEntry adds the passed QueueEntry at the end of the queue
 func (dj *Dj) AddEntry(newEntry QueueEntry) {
 	dj.waitingQueue.Lock()
 	dj.waitingQueue.Items = append(dj.waitingQueue.Items, newEntry)
 	dj.waitingQueue.Unlock()
 }
 
-// InsertEntry ...
+// InsertEntry inserts the passed QueueEntry into the queue at the given index
+// if the index is too high it has the same effect as AddEntry()
 func (dj *Dj) InsertEntry(newEntry QueueEntry, index int) error {
 	dj.waitingQueue.Lock()
 	defer dj.waitingQueue.Unlock()
@@ -104,7 +109,7 @@ func (dj *Dj) InsertEntry(newEntry QueueEntry, index int) error {
 	return nil
 }
 
-// RemoveIndex ...
+// RemoveIndex  removes the element the given index from the queue
 func (dj *Dj) RemoveIndex(index int) error {
 	dj.waitingQueue.Lock()
 	if index >= len(dj.waitingQueue.Items) || index < 0 {
@@ -128,7 +133,7 @@ func (dj *Dj) pop() (QueueEntry, error) {
 	return entry, nil
 }
 
-// EntryAtIndex ...
+// EntryAtIndex returns the QueueEntry at the given index or error if the index is out of range
 func (dj *Dj) EntryAtIndex(index int) (QueueEntry, error) {
 	dj.waitingQueue.Lock()
 	defer dj.waitingQueue.Unlock()
@@ -142,7 +147,9 @@ func (dj *Dj) EntryAtIndex(index int) (QueueEntry, error) {
 	return entry, nil
 }
 
-// Play ...
+// Play starts the playback to the given RTMP server
+// if nothing is in the playlist it waits for new content to be added
+// any erncountered errors are sent to the playbackErrorFeed
 func (dj *Dj) Play(rtmpServer string) {
 	for {
 		entry, err := dj.pop()
@@ -182,7 +189,7 @@ func (dj *Dj) Play(rtmpServer string) {
 	}
 }
 
-// UserPosition ...
+// UserPosition returns a slice of all the position in the queue that belong to the given user
 func (dj *Dj) UserPosition(nick string) (positions []int) {
 	dj.waitingQueue.Lock()
 	defer dj.waitingQueue.Unlock()
@@ -195,7 +202,7 @@ func (dj *Dj) UserPosition(nick string) (positions []int) {
 	return positions
 }
 
-// DurationUntilUser ...
+// DurationUntilUser returns a slice of all the durations to the songs in the queue that belong to the given user
 func (dj *Dj) DurationUntilUser(nick string) (durations []time.Duration) {
 	dj.waitingQueue.Lock()
 	defer dj.waitingQueue.Unlock()
@@ -210,8 +217,9 @@ func (dj *Dj) DurationUntilUser(nick string) (durations []time.Duration) {
 	return durations
 }
 
-// AddDedication ...
-func (dj *Dj) AddDedication(index int, target string) error {
+// AddDedication changes the dedication of the queue entry at the given index
+// returns an error if the index is out of range
+func (dj *Dj) AddDedication(index int, dedication string) error {
 	dj.waitingQueue.Lock()
 	defer dj.waitingQueue.Unlock()
 
@@ -219,6 +227,6 @@ func (dj *Dj) AddDedication(index int, target string) error {
 		return errors.New("index out of range")
 	}
 
-	dj.waitingQueue.Items[index].Dedication = target
+	dj.waitingQueue.Items[index].Dedication = dedication
 	return nil
 }
