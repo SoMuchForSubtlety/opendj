@@ -30,7 +30,7 @@ type Dj struct {
 // Video ...
 type Video struct {
 	Title    string
-	ID       string
+	URL      string
 	Duration time.Duration
 }
 
@@ -48,7 +48,7 @@ type queue struct {
 
 const youtubeURLStart = "https://www.youtube.com/watch?v="
 
-// NewDj returns a new Dj struct and channels for errors plaback events
+// NewDj returns a new Dj struct and channels for errors playack events
 func NewDj(youtubeKey string, queue []QueueEntry) (dj *Dj, playbackFeed <-chan QueueEntry, playbackErrorFeed <-chan error, err error) {
 	dj = &Dj{}
 	dj.waitingQueue.Items = queue
@@ -74,7 +74,7 @@ func (dj *Dj) YouTubeVideo(videoID string) (video Video, err error) {
 		return video, errors.New("Video not found")
 	}
 	video.Title = res.Items[0].Snippet.Title
-	video.ID = res.Items[0].Id
+	video.URL = youtubeURLStart + res.Items[0].Id
 	video.Duration, _ = time.ParseDuration(strings.ToLower(res.Items[0].ContentDetails.Duration[2:]))
 	return video, nil
 }
@@ -160,7 +160,7 @@ func (dj *Dj) Play(rtmpServer string) {
 		}
 		dj.currentEntry = entry
 
-		command := exec.Command("youtube-dl", "-f", "bestaudio", "-g", youtubeURLStart+dj.currentEntry.Video.ID)
+		command := exec.Command("youtube-dl", "-f", "bestaudio", "-g", dj.currentEntry.Video.URL)
 		url, err := command.Output()
 		if err != nil {
 			dj.playbackErrors <- err
