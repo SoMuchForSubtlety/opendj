@@ -2,4 +2,4 @@
 
 # opendj
 
-A simple plugDJ clone that streams songs to a RTMP server usting ffmpeg and youtube-dl .
+A simple plugDJ clone that streams songs to a RTMP server using ffmpeg and youtube-dl .
