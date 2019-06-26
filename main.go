@@ -17,10 +17,17 @@ type Dj struct {
 
 	runningCommand *exec.Cmd
 
+	handlers handlers
+
 	playbackFeed   chan QueueEntry
 	playbackErrors chan error
 
 	songStarted time.Time
+}
+
+type handlers struct {
+	newSongHandler func(QueueEntry)
+	errorHander    func(error)
 }
 
 // Video can be anything youtube-dl supports
@@ -45,13 +52,25 @@ type queue struct {
 const youtubeURLStart = "https://www.youtube.com/watch?v="
 
 // NewDj returns a new Dj struct and channels for errors playback events
-func NewDj(queue []QueueEntry) (dj *Dj, playbackFeed <-chan QueueEntry, playbackErrorFeed <-chan error, err error) {
+func NewDj(queue []QueueEntry) (dj *Dj, err error) {
 	dj = &Dj{}
 	dj.waitingQueue.Items = queue
 	dj.playbackFeed = make(chan QueueEntry, 100)
 	dj.playbackErrors = make(chan error, 100)
 
-	return dj, dj.playbackFeed, dj.playbackErrors, nil
+	return dj, nil
+}
+
+// AddNewSongHandler adds a function that will be called every time a new song starts playing
+func (dj *Dj) AddNewSongHandler(f func(QueueEntry)) {
+	dj.handlers.newSongHandler = f
+}
+
+// AddPlaybackErrorHandler adds a function that will be called every time an error occurs during playback
+// in effect this mean it will be called every time ffmpeg or youtube-dl exit with an error
+// sometimes ffmpeg can exit with code 1 even though the song was streamed successfully
+func (dj *Dj) AddPlaybackErrorHandler(f func(error)) {
+	dj.handlers.errorHander = f
 }
 
 // YouTubeVideo returns a video struct for a given youtube ID and any encoutered errors
@@ -164,13 +183,19 @@ func (dj *Dj) Play(rtmpServer string) {
 			time.Sleep(time.Second * 5)
 			continue
 		}
+
 		dj.currentEntry = entry
+
+		if dj.handlers.newSongHandler != nil {
+			dj.handlers.newSongHandler(entry)
+		}
 
 		command := exec.Command("youtube-dl", "-f", "bestaudio", "-g", dj.currentEntry.Video.URL)
 		url, err := command.Output()
 		if err != nil {
-			dj.playbackErrors <- err
-			continue
+			if dj.handlers.errorHander != nil {
+				dj.handlers.errorHander(err)
+			}
 		}
 
 		urlProper := strings.TrimSpace(string(url))
@@ -179,8 +204,9 @@ func (dj *Dj) Play(rtmpServer string) {
 		command = exec.Command("ffmpeg", "-reconnect", "1", "-reconnect_at_eof", "1", "-reconnect_delay_max", "3", "-re", "-i", urlProper, "-codec:a", "aac", "-f", "flv", rtmpServer)
 		err = command.Start()
 		if err != nil {
-			dj.playbackErrors <- err
-			continue
+			if dj.handlers.errorHander != nil {
+				dj.handlers.errorHander(err)
+			}
 		}
 		dj.playbackFeed <- dj.currentEntry
 
@@ -188,7 +214,9 @@ func (dj *Dj) Play(rtmpServer string) {
 
 		err = command.Wait()
 		if err != nil {
-			dj.playbackErrors <- err
+			if dj.handlers.errorHander != nil {
+				dj.handlers.errorHander(err)
+			}
 		}
 
 		dj.runningCommand = nil
