@@ -6,8 +6,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"google.golang.org/api/youtube/v3"
 )
 
 // Dj stores the queue and handlers
@@ -67,20 +65,6 @@ func (dj *Dj) AddNewSongHandler(f func(QueueEntry)) {
 // sometimes ffmpeg can exit with code 1 even though the song was streamed successfully
 func (dj *Dj) AddPlaybackErrorHandler(f func(error)) {
 	dj.handlers.errorHander = f
-}
-
-// YouTubeVideo returns a video struct for a given youtube ID and any encoutered errors
-func (dj *Dj) YouTubeVideo(videoID string, ytServ *youtube.Service) (media Media, err error) {
-	res, err := ytServ.Videos.List("id,snippet,contentDetails").Id(videoID).Do()
-	if err != nil {
-		return media, err
-	} else if len(res.Items) < 1 {
-		return media, errors.New("Video not found")
-	}
-	media.Title = res.Items[0].Snippet.Title
-	media.URL = youtubeURLStart + res.Items[0].Id
-	media.Duration, _ = time.ParseDuration(strings.ToLower(res.Items[0].ContentDetails.Duration[2:]))
-	return media, nil
 }
 
 // Queue return the current queue as a list of queue entries
