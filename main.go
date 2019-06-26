@@ -10,7 +10,7 @@ import (
 	"google.golang.org/api/youtube/v3"
 )
 
-// Dj ...
+// Dj stores the queue and handlers
 type Dj struct {
 	waitingQueue queue
 	currentEntry QueueEntry
@@ -18,9 +18,6 @@ type Dj struct {
 	runningCommand *exec.Cmd
 
 	handlers handlers
-
-	playbackFeed   chan QueueEntry
-	playbackErrors chan error
 
 	songStarted time.Time
 }
@@ -30,16 +27,17 @@ type handlers struct {
 	errorHander    func(error)
 }
 
-// Video can be anything youtube-dl supports
-type Video struct {
+// Media represents a video or song that can be streamed
+// this can be anything youtube-dl supports
+type Media struct {
 	Title    string
 	URL      string
 	Duration time.Duration
 }
 
-// QueueEntry ...
+// A QueueEntry represents media and metadata the can be ented into a queue
 type QueueEntry struct {
-	Video      Video
+	Media      Media
 	User       string
 	Dedication string
 }
@@ -51,12 +49,10 @@ type queue struct {
 
 const youtubeURLStart = "https://www.youtube.com/watch?v="
 
-// NewDj returns a new Dj struct and channels for errors playback events
+// NewDj returns a new Dj struct
 func NewDj(queue []QueueEntry) (dj *Dj, err error) {
 	dj = &Dj{}
 	dj.waitingQueue.Items = queue
-	dj.playbackFeed = make(chan QueueEntry, 100)
-	dj.playbackErrors = make(chan error, 100)
 
 	return dj, nil
 }
@@ -74,17 +70,17 @@ func (dj *Dj) AddPlaybackErrorHandler(f func(error)) {
 }
 
 // YouTubeVideo returns a video struct for a given youtube ID and any encoutered errors
-func (dj *Dj) YouTubeVideo(videoID string, ytServ *youtube.Service) (video Video, err error) {
+func (dj *Dj) YouTubeVideo(videoID string, ytServ *youtube.Service) (media Media, err error) {
 	res, err := ytServ.Videos.List("id,snippet,contentDetails").Id(videoID).Do()
 	if err != nil {
-		return video, err
+		return media, err
 	} else if len(res.Items) < 1 {
-		return video, errors.New("Video not found")
+		return media, errors.New("Video not found")
 	}
-	video.Title = res.Items[0].Snippet.Title
-	video.URL = youtubeURLStart + res.Items[0].Id
-	video.Duration, _ = time.ParseDuration(strings.ToLower(res.Items[0].ContentDetails.Duration[2:]))
-	return video, nil
+	media.Title = res.Items[0].Snippet.Title
+	media.URL = youtubeURLStart + res.Items[0].Id
+	media.Duration, _ = time.ParseDuration(strings.ToLower(res.Items[0].ContentDetails.Duration[2:]))
+	return media, nil
 }
 
 // Queue return the current queue as a list of queue entries
@@ -190,7 +186,7 @@ func (dj *Dj) Play(rtmpServer string) {
 			dj.handlers.newSongHandler(entry)
 		}
 
-		command := exec.Command("youtube-dl", "-f", "bestaudio", "-g", dj.currentEntry.Video.URL)
+		command := exec.Command("youtube-dl", "-f", "bestaudio", "-g", dj.currentEntry.Media.URL)
 		url, err := command.Output()
 		if err != nil {
 			if dj.handlers.errorHander != nil {
@@ -208,7 +204,6 @@ func (dj *Dj) Play(rtmpServer string) {
 				dj.handlers.errorHander(err)
 			}
 		}
-		dj.playbackFeed <- dj.currentEntry
 
 		dj.runningCommand = command
 
@@ -241,12 +236,12 @@ func (dj *Dj) DurationUntilUser(nick string) (durations []time.Duration) {
 	dj.waitingQueue.Lock()
 	defer dj.waitingQueue.Unlock()
 
-	dur := dj.currentEntry.Video.Duration - time.Since(dj.songStarted)
+	dur := dj.currentEntry.Media.Duration - time.Since(dj.songStarted)
 	for _, content := range dj.waitingQueue.Items {
 		if content.User == nick {
 			durations = append(durations, dur)
 		}
-		dur += content.Video.Duration
+		dur += content.Media.Duration
 	}
 	return durations
 }
