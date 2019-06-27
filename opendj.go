@@ -233,3 +233,13 @@ func (dj *Dj) DurationUntilUser(nick string) (durations []time.Duration) {
 	}
 	return durations
 }
+
+// CurrentlyPlaying returns the song that is currently being played and for how long it has been playing.
+//
+// Returns an error if there is nothing playing.
+func (dj *Dj) CurrentlyPlaying() (entry QueueEntry, progress time.Duration, err error) {
+	if dj.currentEntry.Media == (Media{}) {
+		err = errors.New("there is no song being played")
+	}
+	return dj.currentEntry, time.Since(dj.songStarted), err
+}
