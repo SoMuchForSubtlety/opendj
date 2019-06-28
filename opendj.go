@@ -21,8 +21,9 @@ type Dj struct {
 }
 
 type handlers struct {
-	newSongHandler func(QueueEntry)
-	errorHander    func(error)
+	newSongHandler   func(QueueEntry)
+	endOfSongHandler func(QueueEntry, error)
+	errorHander      func(error)
 }
 
 // Media represents a video or song that can be streamed.
@@ -57,6 +58,12 @@ func NewDj(queue []QueueEntry) (dj *Dj, err error) {
 // AddNewSongHandler adds a function that will be called every time a new song starts playing.
 func (dj *Dj) AddNewSongHandler(f func(QueueEntry)) {
 	dj.handlers.newSongHandler = f
+}
+
+// AddEndOfSongHandler adds a function that will be called every time a song stops playing.
+// It gets passed the QueueEntry that finished playing and any errors encountered during playback.
+func (dj *Dj) AddEndOfSongHandler(f func(QueueEntry, error)) {
+	dj.handlers.endOfSongHandler = f
 }
 
 // AddPlaybackErrorHandler adds a function that will be called every time an error occurs during playback.
@@ -180,6 +187,10 @@ func (dj *Dj) Play(rtmpServer string) {
 			if dj.handlers.errorHander != nil {
 				dj.handlers.errorHander(err)
 			}
+			if dj.handlers.endOfSongHandler != nil {
+				dj.handlers.endOfSongHandler(entry, err)
+			}
+			continue
 		}
 
 		urlProper := strings.TrimSpace(string(url))
@@ -191,6 +202,10 @@ func (dj *Dj) Play(rtmpServer string) {
 			if dj.handlers.errorHander != nil {
 				dj.handlers.errorHander(err)
 			}
+			if dj.handlers.endOfSongHandler != nil {
+				dj.handlers.endOfSongHandler(entry, err)
+			}
+			continue
 		}
 
 		dj.runningCommand = command
@@ -200,6 +215,10 @@ func (dj *Dj) Play(rtmpServer string) {
 			if dj.handlers.errorHander != nil {
 				dj.handlers.errorHander(err)
 			}
+		}
+
+		if dj.handlers.endOfSongHandler != nil {
+			dj.handlers.endOfSongHandler(entry, err)
 		}
 
 		dj.runningCommand = nil
