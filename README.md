@@ -2,5 +2,4 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/SoMuchForSubtlety/opendj)](https://goreportcard.com/report/github.com/SoMuchForSubtlety/opendj)
 
 # opendj
-
-A simple plugDJ clone that streams songs to a RTMP server using ffmpeg and youtube-dl .
+a simple library that makes it easy to implement a plug.dj clone
