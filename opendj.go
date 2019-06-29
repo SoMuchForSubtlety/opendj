@@ -48,11 +48,11 @@ type queue struct {
 }
 
 // NewDj initializes and returns a new Dj struct.
-func NewDj(queue []QueueEntry) (dj *Dj, err error) {
+func NewDj(queue []QueueEntry) (dj *Dj) {
 	dj = &Dj{}
 	dj.waitingQueue.Items = queue
 
-	return dj, nil
+	return dj
 }
 
 // AddNewSongHandler adds a function that will be called every time a new song starts playing.
