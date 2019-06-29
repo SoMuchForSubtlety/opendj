@@ -4,6 +4,11 @@
 # opendj
 a simple library that makes it easy to implement a plug.dj clone
 
+**This library needs ffmpeg and youtube-dl to work!**  
+It should be able to stream anything you can use the following command on
+
+	$ youtube-dl -f bestaudio -g {url}
+
 ## example usage
 
 ```go
