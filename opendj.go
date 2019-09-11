@@ -2,6 +2,7 @@ package opendj
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"strings"
 	"sync"
@@ -196,7 +197,9 @@ func (dj *Dj) Play(rtmpServer string) {
 		urlProper := strings.TrimSpace(string(url))
 		dj.songStarted = time.Now()
 
-		command = exec.Command("ffmpeg", "-reconnect", "1", "-reconnect_at_eof", "1", "-reconnect_delay_max", "3", "-re", "-i", urlProper, "-codec:a", "aac", "-f", "flv", rtmpServer)
+		command = exec.Command("ffmpeg", "-loglevel", "warning", "-hide_banner", "-reconnect", "1", "-reconnect_at_eof", "1", "-reconnect_delay_max", "3", "-re", "-i", urlProper, "-codec:a", "aac", "-f", "flv", rtmpServer)
+		command.Stdout = os.Stdout
+		command.Stderr = os.Stderr
 		err = command.Start()
 		if err != nil {
 			if dj.handlers.errorHander != nil {
