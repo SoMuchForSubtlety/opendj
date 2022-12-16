@@ -205,12 +205,42 @@ func (dj *Dj) Play(rtmpServer string) {
 		}
 
 		urlProper := strings.TrimSpace(string(url))
+
+		var title []byte
+		command = exec.Command("yt-dlp", "--get-title", dj.currentEntry.Media.URL)
+		title, err = command.Output()
+		if err != nil {
+			if dj.handlers.errorHander != nil {
+				dj.handlers.errorHander(err)
+			}
+			if dj.handlers.endOfSongHandler != nil {
+				dj.handlers.endOfSongHandler(entry, err)
+			}
+			continue
+		}
+		titleProper := strings.TrimSpace(string(title))
+
 		dj.songStarted = time.Now()
 
-		command = exec.Command("ffmpeg", "-loglevel", "warning", "-hide_banner", "-reconnect", "1", "-reconnect_at_eof", "1", "-reconnect_delay_max", "3", "-re", "-i", urlProper, "-codec:a", "aac", "-f", "flv", rtmpServer)
+		command = exec.Command(
+			"ffmpeg",
+			"-loglevel", "warning",
+			"-hide_banner",
+			"-reconnect", "1",
+			"-reconnect_at_eof", "1",
+			"-reconnect_delay_max", "3",
+			"-re",
+			"-i", urlProper,
+			"-vf", "\"drawtext=text='Now playing "+titleProper+"':x=180:y=180:fontsize=24:fontcolor=white\"",
+			"-codec:a", "aac",
+			"-f", "flv",
+			rtmpServer,
+		)
+
 		command.Stdout = os.Stdout
 		command.Stderr = os.Stderr
 		err = command.Start()
+
 		if err != nil {
 			if dj.handlers.errorHander != nil {
 				dj.handlers.errorHander(err)
