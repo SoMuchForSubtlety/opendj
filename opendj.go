@@ -50,6 +50,16 @@ type queue struct {
 
 // NewDj initializes and returns a new Dj struct.
 func NewDj(queue []QueueEntry) (dj *Dj) {
+	_, err := exec.LookPath("yt-dlp")
+	if err != nil {
+	  panic(err)
+	}
+
+	_, err = exec.LookPath("ffmpeg")
+	if err != nil {
+	  panic(err)
+	}
+
 	dj = &Dj{}
 	dj.waitingQueue.Items = queue
 
@@ -69,7 +79,7 @@ func (dj *Dj) AddEndOfSongHandler(f func(QueueEntry, error)) {
 
 // AddPlaybackErrorHandler adds a function that will be called every time an error occurs during playback.
 //
-// In effect this mean it will be called every time ffmpeg or youtube-dl exit with an error.
+// In effect this mean it will be called every time ffmpeg or yt-dlp exit with an error.
 // Sometimes ffmpeg can exit with code 1 even though the song was streamed successfully.
 func (dj *Dj) AddPlaybackErrorHandler(f func(error)) {
 	dj.handlers.errorHander = f
@@ -182,7 +192,7 @@ func (dj *Dj) Play(rtmpServer string) {
 			dj.handlers.newSongHandler(entry)
 		}
 
-		command := exec.Command("youtube-dl", "-f", "bestaudio", "-g", dj.currentEntry.Media.URL)
+		command := exec.Command("yt-dlp", "-f", "bestaudio", "-g", dj.currentEntry.Media.URL)
 		url, err := command.Output()
 		if err != nil {
 			if dj.handlers.errorHander != nil {
