@@ -2,19 +2,23 @@ package opendj
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
+
+	"golang.org/x/sync/errgroup"
 )
+
+var ErrorEmptyQueue = errors.New("can't pop from empty queue")
 
 // Dj stores the queue and handlers
 type Dj struct {
 	waitingQueue queue
 	currentEntry QueueEntry
-
-	runningCommand *exec.Cmd
 
 	handlers handlers
 
@@ -52,12 +56,12 @@ type queue struct {
 func NewDj(queue []QueueEntry) (dj *Dj) {
 	_, err := exec.LookPath("yt-dlp")
 	if err != nil {
-	  panic(err)
+		panic(err)
 	}
 
 	_, err = exec.LookPath("ffmpeg")
 	if err != nil {
-	  panic(err)
+		panic(err)
 	}
 
 	dj = &Dj{}
@@ -151,7 +155,7 @@ func (dj *Dj) pop() (QueueEntry, error) {
 	defer dj.waitingQueue.Unlock()
 
 	if len(dj.waitingQueue.Items) < 1 {
-		return QueueEntry{}, errors.New("can't pop from empty queue")
+		return QueueEntry{}, ErrorEmptyQueue
 	}
 
 	entry := dj.waitingQueue.Items[0]
@@ -178,63 +182,92 @@ func (dj *Dj) EntryAtIndex(index int) (QueueEntry, error) {
 // If nothing is in the playlist it waits for new content to be added.
 // Any encoutered errors are handled by the errorHandler.
 func (dj *Dj) Play(rtmpServer string) {
-	for {
-		entry, err := dj.pop()
+	const fifoPath = "/tmp/opendj-fifo"
+	_ = os.Remove(fifoPath)
+
+	if err := syscall.Mkfifo(fifoPath, 0o0644); err != nil {
+		panic(err)
+	}
+
+	eg := errgroup.Group{}
+	eg.Go(func() error {
+		emptyStreamCounter := 0
+
+		fifo, err := os.OpenFile(fifoPath, os.O_CREATE|os.O_WRONLY, os.ModeNamedPipe)
 		if err != nil {
-			// TODO: not ideal, maybe have a backup playlist
-			time.Sleep(time.Second * 5)
-			continue
+			return err
 		}
+		defer fifo.Close()
 
-		dj.currentEntry = entry
+		for {
+			entry, err := dj.pop()
+			if err != nil {
+				// In the case that the queue is empty, input 15 seconds of
+				// silence into the pipe up to 4 consecutive times before
+				// returning
+				if errors.Is(err, ErrorEmptyQueue) {
+					if emptyStreamCounter >= 4 {
+						break
+					}
 
-		if dj.handlers.newSongHandler != nil {
-			dj.handlers.newSongHandler(entry)
-		}
+					if err = writeToFIFO(
+						fifo,
+						"-re",
+						"-t", "00:00:15",
+						"-f", "lavfi",
+						"-i", "anullsrc",
+					); err != nil {
+						return err
+					}
 
-		command := exec.Command("yt-dlp", "-f", "bestaudio", "-g", dj.currentEntry.Media.URL)
-		url, err := command.Output()
-		if err != nil {
-			if dj.handlers.errorHander != nil {
-				dj.handlers.errorHander(err)
+					emptyStreamCounter++
+					continue
+				}
+
+				return err
 			}
-			if dj.handlers.endOfSongHandler != nil {
-				dj.handlers.endOfSongHandler(entry, err)
+
+			output, err := exec.Command("yt-dlp", "-f", "bestaudio", "-g", entry.Media.URL).Output()
+			if err != nil {
+				return err
 			}
-			continue
-		}
+			audioURL := strings.TrimSpace(string(output))
 
-		urlProper := strings.TrimSpace(string(url))
-		dj.songStarted = time.Now()
-
-		command = exec.Command("ffmpeg", "-loglevel", "warning", "-hide_banner", "-reconnect", "1", "-reconnect_at_eof", "1", "-reconnect_delay_max", "3", "-re", "-i", urlProper, "-codec:a", "aac", "-f", "flv", rtmpServer)
-		command.Stdout = os.Stdout
-		command.Stderr = os.Stderr
-		err = command.Start()
-		if err != nil {
-			if dj.handlers.errorHander != nil {
-				dj.handlers.errorHander(err)
-			}
-			if dj.handlers.endOfSongHandler != nil {
-				dj.handlers.endOfSongHandler(entry, err)
-			}
-			continue
-		}
-
-		dj.runningCommand = command
-
-		err = command.Wait()
-		if err != nil {
-			if dj.handlers.errorHander != nil {
-				dj.handlers.errorHander(err)
+			if err = writeToFIFO(
+				fifo,
+				"-reconnect", "1",
+				"-i", audioURL,
+				"-af", "apad=pad_dur=5",
+			); err != nil {
+				return err
 			}
 		}
+		return nil
+	})
 
-		if dj.handlers.endOfSongHandler != nil {
-			dj.handlers.endOfSongHandler(entry, err)
+	eg.Go(func() error {
+		time.Sleep(5 * time.Second)
+
+		cmd := exec.Command(
+			"ffmpeg",
+			"-re",
+			"-i", fifoPath,
+			"-c", "copy",
+			"-f", "flv",
+			rtmpServer,
+		)
+
+		if err := cmd.Run(); err != nil {
+			return fmt.Errorf("failed to stream from fifo: %w", err)
 		}
 
-		dj.runningCommand = nil
+		return nil
+	})
+
+	if err := eg.Wait(); err != nil {
+		if dj.handlers.errorHander != nil {
+			dj.handlers.errorHander(err)
+		}
 	}
 }
 
@@ -274,4 +307,23 @@ func (dj *Dj) CurrentlyPlaying() (entry QueueEntry, progress time.Duration, err 
 		err = errors.New("there is no song being played")
 	}
 	return dj.currentEntry, time.Since(dj.songStarted), err
+}
+
+func writeToFIFO(fifo *os.File, args ...string) error {
+	args = append(args, []string{
+		"-c:a", "aac",
+		"-strict", "-2",
+		"-ar", "44100",
+		"-b:a", "160k",
+		"-ac", "2",
+		"-f", "mpegts", "pipe:1",
+	}...)
+
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stdout = fifo
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("failed to write to pipe: %w", err)
+	}
+	return nil
 }
