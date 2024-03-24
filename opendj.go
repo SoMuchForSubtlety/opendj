@@ -202,6 +202,7 @@ func (dj *Dj) Play(rtmpServer string) {
 		for {
 			entry, err := dj.pop()
 			if err != nil {
+				dj.currentEntry = QueueEntry{}
 				// In the case that the queue is empty, input 15 seconds of
 				// silence into the pipe up to 4 consecutive times before
 				// returning
@@ -227,12 +228,14 @@ func (dj *Dj) Play(rtmpServer string) {
 				return err
 			}
 
+			dj.currentEntry = entry
 			output, err := exec.Command("yt-dlp", "-f", "bestaudio", "-g", entry.Media.URL).Output()
 			if err != nil {
 				return err
 			}
 			audioURL := strings.TrimSpace(string(output))
 
+			dj.songStarted = time.Now()
 			if err = writeToFIFO(
 				fifo,
 				"-reconnect", "1",
