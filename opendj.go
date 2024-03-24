@@ -235,6 +235,10 @@ func (dj *Dj) Play(rtmpServer string) {
 			}
 			audioURL := strings.TrimSpace(string(output))
 
+			if dj.handlers.newSongHandler != nil {
+				dj.handlers.newSongHandler(entry)
+			}
+
 			dj.songStarted = time.Now()
 			if err = writeToFIFO(
 				fifo,
@@ -243,6 +247,10 @@ func (dj *Dj) Play(rtmpServer string) {
 				"-af", "apad=pad_dur=5",
 			); err != nil {
 				return err
+			}
+
+			if dj.handlers.endOfSongHandler != nil {
+				dj.handlers.endOfSongHandler(entry, err)
 			}
 		}
 		return nil
