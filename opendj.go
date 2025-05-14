@@ -1,10 +1,12 @@
 package opendj
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,7 +24,9 @@ type Dj struct {
 
 	handlers handlers
 
-	songStarted time.Time
+	songStarted       time.Time
+	currentSongCtx    context.Context
+	currentSongCancel context.CancelFunc
 }
 
 type handlers struct {
@@ -130,7 +134,7 @@ func (dj *Dj) RemoveIndex(index int) error {
 	if index >= len(dj.waitingQueue.Items) || index < 0 {
 		return errors.New("index out of range")
 	}
-	dj.waitingQueue.Items = append(dj.waitingQueue.Items[:index], dj.waitingQueue.Items[index+1:]...)
+	dj.waitingQueue.Items = slices.Delete(dj.waitingQueue.Items, index, index+1)
 	return nil
 }
 
@@ -181,7 +185,7 @@ func (dj *Dj) EntryAtIndex(index int) (QueueEntry, error) {
 //
 // If nothing is in the playlist it waits for new content to be added.
 // Any encoutered errors are handled by the errorHandler.
-func (dj *Dj) Play(rtmpServer string) {
+func (dj *Dj) Play(ctx context.Context, rtmpServer string) {
 	const fifoPath = "/tmp/opendj-fifo"
 	_ = os.Remove(fifoPath)
 
@@ -200,6 +204,7 @@ func (dj *Dj) Play(rtmpServer string) {
 		defer fifo.Close()
 
 		for {
+			dj.currentSongCtx, dj.currentSongCancel = context.WithCancel(ctx)
 			entry, err := dj.pop()
 			if err != nil {
 				dj.currentEntry = QueueEntry{}
@@ -212,6 +217,7 @@ func (dj *Dj) Play(rtmpServer string) {
 					}
 
 					if err = writeToFIFO(
+						dj.currentSongCtx,
 						fifo,
 						"-re",
 						"-t", "00:00:15",
@@ -228,12 +234,24 @@ func (dj *Dj) Play(rtmpServer string) {
 				return err
 			}
 
-			dj.currentEntry = entry
-			output, err := exec.Command("yt-dlp", "-f", "bestaudio", "-g", entry.Media.URL).Output()
+			output, err := exec.CommandContext(dj.currentSongCtx, "yt-dlp", "--print", "\"%(title)s\"", entry.Media.URL).Output()
 			if err != nil {
+				if errors.Is(dj.currentSongCtx.Err(), context.Canceled) {
+					continue
+				}
+				return err
+			}
+			entry.Media.Title = strings.TrimSpace(string(output))
+
+			output, err = exec.CommandContext(dj.currentSongCtx, "yt-dlp", "-f", "bestaudio", "-g", entry.Media.URL).Output()
+			if err != nil {
+				if errors.Is(dj.currentSongCtx.Err(), context.Canceled) {
+					continue
+				}
 				return err
 			}
 			audioURL := strings.TrimSpace(string(output))
+			dj.currentEntry = entry
 
 			if dj.handlers.newSongHandler != nil {
 				dj.handlers.newSongHandler(entry)
@@ -241,11 +259,18 @@ func (dj *Dj) Play(rtmpServer string) {
 
 			dj.songStarted = time.Now()
 			if err = writeToFIFO(
+				dj.currentSongCtx,
 				fifo,
 				"-reconnect", "1",
 				"-i", audioURL,
 				"-af", "apad=pad_dur=5",
 			); err != nil {
+				if errors.Is(dj.currentSongCtx.Err(), context.Canceled) {
+					if dj.handlers.endOfSongHandler != nil {
+						dj.handlers.endOfSongHandler(entry, nil)
+					}
+					continue
+				}
 				return err
 			}
 
@@ -259,7 +284,8 @@ func (dj *Dj) Play(rtmpServer string) {
 	eg.Go(func() error {
 		time.Sleep(5 * time.Second)
 
-		cmd := exec.Command(
+		cmd := exec.CommandContext(
+			ctx,
 			"ffmpeg",
 			"-re",
 			"-i", fifoPath,
@@ -320,7 +346,11 @@ func (dj *Dj) CurrentlyPlaying() (entry QueueEntry, progress time.Duration, err 
 	return dj.currentEntry, time.Since(dj.songStarted), err
 }
 
-func writeToFIFO(fifo *os.File, args ...string) error {
+func (dj *Dj) Skip() {
+	dj.currentSongCancel()
+}
+
+func writeToFIFO(ctx context.Context, fifo *os.File, args ...string) error {
 	args = append(args, []string{
 		"-c:a", "aac",
 		"-strict", "-2",
@@ -330,7 +360,7 @@ func writeToFIFO(fifo *os.File, args ...string) error {
 		"-f", "mpegts", "pipe:1",
 	}...)
 
-	cmd := exec.Command("ffmpeg", args...)
+	cmd := exec.CommandContext(ctx, "ffmpeg", args...)
 	cmd.Stdout = fifo
 
 	if err := cmd.Run(); err != nil {
